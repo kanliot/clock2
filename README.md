@@ -15,5 +15,5 @@ Most *nix systems have perl already installed.
      Like 1:23:45 PM
      
  ![looks like](https://raw.githubusercontent.com/kanliot/clock2/main/clock2.png)
- ##### `clock2` doesn't actually clear the terminal screen.  It uses xterm control sequences to clear the current line. 
+ ##### `clock2` doesn't actually clear the terminal screen.  It uses vt100 control characters to clear the current line. 
  
