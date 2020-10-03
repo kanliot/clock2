@@ -1,7 +1,7 @@
 # clock2
 Shows 12 or 24 hour digital clock that updates each second.  Runs in a foreground process in your terminal.
 
-### Installation:
+#### Installation:
 Download the clock2 script, then run it with `perl ./clock2` or by making the script executable and running it directly.    
 Most *nix systems have perl already installed.
 
