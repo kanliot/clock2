@@ -10,4 +10,4 @@ Shows 12 or 24 hour digital clock that updates each second.  Runs in a foregroun
      `clock2` shows the current time, until you break out of the program.
      Like 1:23:45 PM
     
-    ![looks like](https://raw.githubusercontent.com/kanliot/clock2/main/clock2.png)
+ ![looks like](https://raw.githubusercontent.com/kanliot/clock2/main/clock2.png)
