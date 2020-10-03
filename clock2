@@ -1,0 +1,173 @@
+#!/usr/bin/perl 
+
+# terminal clock that keeps time in microseconds and displays time in seconds like "1:45:59 PM"
+# this program should run in the foreground, in a terminal
+# break signal should quit the clock.  
+# on my system, the clock prints each line at about 200 microseconds after each second flips,
+# 	 which makes it close to the ::Time::HiRes:time
+# oddly enough, it also prints *before* the second flips on the ::time low-resolution system clock
+
+my $time_display_is_24hr_format = 0; # non-zero means use 24-hour format by default 
+
+use strict;
+use Time::HiRes "usleep"; # Time::HiRes is in core perl. it was first released with perl v5.7.3
+$|=1; #same as STDOUT->autoflush(1); # actually needed since no newlines
+
+use Getopt::Long;
+my ($help,$date);
+my $net;
+our $military = $time_display_is_24hr_format;
+GetOptions ( "n:s",\$net, 'm',\$military, 'military',\$military, 'd',\$date,'h', \$help,'help', \$help);
+Getopt::Long::HelpMessage if $help;
+ 
+#use DDP; p $net;;use Data::Dump; dd ""eq $net;
+$net='eth1' if defined($net)and $net eq ""; # one way to set default argument
+
+
+sub readfile {
+	#https://stackoverflow.com/questions/17671735/will-re-reading-a-file-being-updated-in-proc-without-closing-work
+	open my $fh, $_[0] or die;
+	my @lines =<$fh> ;
+	chomp @lines;
+	return join '', @lines;
+}
+use warnings;
+
+sub readfile2 { 
+	my $fh=pop;
+	   # use Fcntl; 
+#	       use Fcntl qw(:seek :DEFAULT :flock);
+#	seek $fh, SEEK_SET, 0;
+	my $bytes=<$fh>;
+	return $bytes;
+} 
+
+sub readfile3 {  # given handle in argument, return first line, after seeking to 0
+	use Fcntl ":seek"; 
+	seek $_[0], 0, SEEK_SET;
+	scalar readline $_[0]; # huh perl is funny
+}
+
+if($net) { # just a sanity check.  for debugging only please.
+	use feature 'say';
+	my $IF='eth';
+	say '1 for eth1, internet, 0 for eth0 lan';
+	$IF .= chr system('getcn "eth"')>>8;
+	say $IF;
+
+	 
+#	$IF=$net;
+	my $ms_period = 1_000_000; # stats actually repeat when calling more than 1hz .  another way to get sub second stats?  huh i don't remember this problem when using `cat`  never mind it is a problem with `cat`, also sleeping for exactly 1s seems buggy since the sync might fall on the time where the update is inaccurate. 
+#	$ms_period *= 1.02;
+# so dumb to use a period other than integer seconds.... it's only updated once per seconds, man.  so even if you adjust, it's updated once per second.   so you're not going ot get better data, only distortion, as you slice data, that's only really meaningful when sampled in seconds. really need to use alarm. 
+	my $hz  = $ms_period / 1_000_000;
+	my $kb = 1024;
+	my $mb = 1024 * 1024;
+
+	open my $FHrxb, "/sys/class/net/$IF/statistics/rx_bytes" or die;
+	open my $FHtxb, "/sys/class/net/$IF/statistics/tx_bytes"or die;
+	print "uh experimental oh my codecs ";
+
+	sub printb { 
+		my ($tx,$rx)=@_;
+		my $bytes = $tx > $rx ? $tx:$rx;
+		$bytes = int ($bytes * $hz); 
+		$tx    = int ($tx * $hz); 
+		$rx    = int ($rx * $hz); 
+		
+		my $mid = "   "; 
+		if ($bytes >9999) {
+			if ($bytes/1024 > 9999) { 
+				return sprintf("%4.1f MiB", $tx/$mb),$mid,sprintf("%4.1f MiB", $rx/$mb);
+			}
+			return sprintf("%4.0f KiB", $tx/$kb),$mid,sprintf("%4.0f KiB", $rx/$kb);
+		}
+		return sprintf("%4d B", $tx),$mid,sprintf("%4d B", $rx);
+	}
+	my ($txmax, $rxmax)=(0,0); 
+	sub printr { 
+#		use Data::Dump; print"\n";dd @_;
+		my ($txb1,$txb2,$rxb1,$rxb2) = @_;
+		$txmax = $txmax > $txb2 - $txb1 ? $txmax : $txb2-$txb1; 
+		$rxmax = $rxmax > $rxb2 - $rxb1 ? $rxmax : $rxb2-$rxb1; 
+		print "\r\e[K(sent,recieved)  (", printb ($txb2-$txb1,$rxb2-$rxb1)," )", printb $txmax, $rxmax ;
+		#print "   \trecieved\t", printb ($rxb2-$rxb1);
+	}
+	my ($rxb,$txb)=(readfile3($FHrxb),readfile3($FHtxb));  # huh 0,0 or [0,0] no work
+
+ 	my ($seconds, $micros) = Time::HiRes::gettimeofday;
+	Time::HiRes::ualarm(1_000_000 - $micros ,$ms_period);  # sleep to next integer second, then more alarms every second.
+#	  use Time::HiRes qw( ITIMER_REAL ); Time::HiRes::setitimer( ITIMER_REAL, $seconds +1, 1) or die "$seconds"; # no works, prob because needs rel. time
+#	alarm(1,1);  # normal alarms don't repeat
+	$SIG{ALRM} = sub {
+#		print "ok\n";
+		printr( int($txb),$txb=readfile3($FHtxb),int $rxb, $rxb=readfile3($FHrxb));
+		 };
+
+	1 while readline ; 
+	exit;
+	while (1) { 
+	#	usleep $ms_period;
+	}
+	
+}
+
+if($date) { # just a sanity check.  for debugging only please.
+	print "uh experimental\n";
+	while (1) { $_ = `date`; chomp;
+	usleep 50_000;
+	print "\r$_"; }
+}
+
+sub print_clock {
+# funny bug i fixed here.  since ::time is different from Time::HiRes::time, if you're waiting around the time when fractional microseconds are near 0
+# the bug would appear when sleeping to the end of the current second, at which print_time would appear to be lagging by one second, since ::time is still on the last second
+	my $floattime = Time::HiRes::time;
+	my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime($floattime);
+	if ($military) {
+# \e[K clears to end of line
+		printf "\r\e[K\t%02d:%02d:%02d  ",$hour,$min,$sec ;
+	}
+	else {
+# rather unintuitive logic to convert to 12-hour AM/PM
+		my $twelve='AM';
+		if ($hour >= 12) {
+			$twelve='PM';
+			if ($hour > 12) { 
+				$hour-=12; 
+			}
+		}
+		elsif ($hour == 0) { 
+			$hour=12;
+		}
+# \e[K clears to end of line
+		printf "\r\e[K\t%d:%02d:%02d $twelve  ",$hour,$min,$sec ;
+	}
+#	return int 1_000_000 * ($floattime - int($floattime)); # return millions of microseconds after the current second, to avoid an system call to ::time
+}
+
+my ($seconds, $micros) = Time::HiRes::gettimeofday;
+Time::HiRes::ualarm(1_000_000 - $micros ,1_000_000);  # sleep to next integer second, then more alarms every second.
+$SIG{ALRM} = sub {print_clock(); };
+
+#	  use Time::HiRes qw( ITIMER_REAL ); Time::HiRes::setitimer( ITIMER_REAL, $seconds +1, 1) or die "$seconds"; # no works, prob because needs rel. time
+#	alarm(1,1);  # normal alarms don't repeat
+
+1 while readline; 
+exit;
+#my $ms = print_clock; 
+#while(1) { usleep 1_000_000 - $ms;  # sleep until next second $ms = print_clock; }
+
+=head1 SYNOPSIS 
+
+clock 
+ 
+ Options:
+   -h, -help            brief help message
+   -m, -military 	24 hour clock
+
+ `clock` shows the current time, until you break out of the program.
+ Like 1:23:45 PM
+
+=cut
+
